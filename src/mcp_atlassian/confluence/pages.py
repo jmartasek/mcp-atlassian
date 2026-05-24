@@ -2,6 +2,7 @@
 
 import difflib
 import logging
+import re
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
@@ -1153,6 +1154,8 @@ class PagesMixin(ConfluenceClient):
         self,
         space_key: str,
         limit: int = 500,
+        root_page_id: str | None = None,
+        exclude_pattern: str | None = None,
     ) -> dict:
         """Get hierarchical page tree for a space.
 
@@ -1166,7 +1169,11 @@ class PagesMixin(ConfluenceClient):
 
         Args:
             space_key: The key of the space
-            limit: Maximum number of pages to fetch (default: 500)
+            limit: Maximum number of pages to return after filtering (default: 500)
+            root_page_id: If provided, only include pages that are descendants
+                of (or equal to) this page. Use to get a subtree.
+            exclude_pattern: Regex pattern (case-insensitive) to exclude pages
+                by title. Matched pages AND all their descendants are removed.
 
         Returns:
             Dictionary with:
@@ -1182,6 +1189,19 @@ class PagesMixin(ConfluenceClient):
         try:
             limit = clamp_limit(limit, context="confluence.get_space_page_tree")
 
+            exclude_re = (
+                re.compile(exclude_pattern, re.IGNORECASE)
+                if exclude_pattern
+                else None
+            )
+            has_filters = bool(root_page_id or exclude_re)
+
+            # When filters are active, over-fetch from the API so we can
+            # still fill up to ``limit`` results after filtering.
+            internal_limit = (
+                min(limit * 5, 10000) if has_filters else limit
+            )
+
             # Paginate using the raw API to access _links.next for reliable
             # truncation detection. The higher-level get_all_pages_from_space()
             # has a broken termination condition when limit > server-side cap.
@@ -1190,8 +1210,8 @@ class PagesMixin(ConfluenceClient):
             all_pages: list[dict[str, Any]] = []
             next_link: str | None = None
 
-            while len(all_pages) < limit:
-                fetch_limit = min(page_size, limit - len(all_pages))
+            while len(all_pages) < internal_limit:
+                fetch_limit = min(page_size, internal_limit - len(all_pages))
                 response = self.confluence.get_all_pages_from_space_raw(
                     space=space_key,
                     start=start,
@@ -1206,7 +1226,7 @@ class PagesMixin(ConfluenceClient):
                     break
                 start += len(batch)
 
-            has_more = len(all_pages) >= limit and bool(next_link)
+            api_has_more = len(all_pages) >= internal_limit and bool(next_link)
 
             if not all_pages:
                 return {
@@ -1215,6 +1235,38 @@ class PagesMixin(ConfluenceClient):
                     "has_more": False,
                     "pages": [],
                 }
+
+            # --- Apply filters ---
+
+            # 1. Subtree filter: keep only the root page and its descendants
+            if root_page_id:
+                all_pages = [
+                    p
+                    for p in all_pages
+                    if p.get("id") == root_page_id
+                    or root_page_id
+                    in [a.get("id") for a in p.get("ancestors", [])]
+                ]
+
+            # 2. Exclude pattern: remove matching pages and their descendants
+            if exclude_re:
+                excluded_ids: set[str] = set()
+                for p in all_pages:
+                    if exclude_re.search(p.get("title", "")):
+                        page_id = p.get("id")
+                        if page_id:
+                            excluded_ids.add(page_id)
+
+                if excluded_ids:
+                    all_pages = [
+                        p
+                        for p in all_pages
+                        if p.get("id") not in excluded_ids
+                        and not any(
+                            a.get("id") in excluded_ids
+                            for a in p.get("ancestors", [])
+                        )
+                    ]
 
             # Build flat list with parent_id and depth
             result_pages = []
@@ -1266,6 +1318,12 @@ class PagesMixin(ConfluenceClient):
                     p["title"] or "",
                 )
             )
+
+            # Truncate to the requested limit
+            has_more_filtered = len(result_pages) > limit
+            result_pages = result_pages[:limit]
+
+            has_more = api_has_more or has_more_filtered
 
             result: dict[str, Any] = {
                 "space_key": space_key,

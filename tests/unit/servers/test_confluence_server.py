@@ -654,6 +654,8 @@ async def test_get_space_page_tree(client, mock_confluence_fetcher):
     call_kwargs = mock_confluence_fetcher.get_space_page_tree.call_args.kwargs
     assert call_kwargs["space_key"] == "TEST"
     assert call_kwargs["limit"] == 100
+    assert call_kwargs["root_page_id"] is None
+    assert call_kwargs["exclude_pattern"] is None
 
     result_data = json.loads(response.content[0].text)
     assert result_data["space_key"] == "TEST"
@@ -691,6 +693,59 @@ async def test_get_space_page_tree_has_more(client, mock_confluence_fetcher):
     assert result_data["has_more"] is True
     assert "hint" in result_data
     assert "truncated" in result_data["hint"].lower()
+
+
+@pytest.mark.anyio
+async def test_get_space_page_tree_with_exclude_pattern(
+    client, mock_confluence_fetcher
+):
+    """Test that exclude_pattern is passed through to the fetcher."""
+    response = await client.call_tool(
+        "confluence_get_space_page_tree",
+        {"space_key": "TEST", "exclude_pattern": "archive|releases"},
+    )
+
+    call_kwargs = mock_confluence_fetcher.get_space_page_tree.call_args.kwargs
+    assert call_kwargs["exclude_pattern"] == "archive|releases"
+    assert call_kwargs["root_page_id"] is None
+
+
+@pytest.mark.anyio
+async def test_get_space_page_tree_with_root_title(
+    client, mock_confluence_fetcher
+):
+    """Test that root_title is resolved to root_page_id."""
+    mock_root = MagicMock()
+    mock_root.id = "999"
+    mock_confluence_fetcher.get_page_by_title.return_value = mock_root
+
+    response = await client.call_tool(
+        "confluence_get_space_page_tree",
+        {"space_key": "TEST", "root_title": "Projects"},
+    )
+
+    mock_confluence_fetcher.get_page_by_title.assert_called_once_with(
+        "TEST", "Projects", convert_to_markdown=False
+    )
+    call_kwargs = mock_confluence_fetcher.get_space_page_tree.call_args.kwargs
+    assert call_kwargs["root_page_id"] == "999"
+
+
+@pytest.mark.anyio
+async def test_get_space_page_tree_root_title_not_found(
+    client, mock_confluence_fetcher
+):
+    """Test error when root_title page is not found."""
+    mock_confluence_fetcher.get_page_by_title.return_value = None
+
+    response = await client.call_tool(
+        "confluence_get_space_page_tree",
+        {"space_key": "TEST", "root_title": "Nonexistent"},
+    )
+
+    result_data = json.loads(response.content[0].text)
+    assert "error" in result_data
+    assert "Nonexistent" in result_data["error"]
 
 
 @pytest.mark.anyio

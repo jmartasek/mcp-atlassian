@@ -519,12 +519,44 @@ async def get_space_page_tree(
     limit: Annotated[
         int,
         Field(
-            description="Max pages to fetch",
+            description="Max pages to return (after filtering)",
             default=100,
             ge=1,
-            le=1000,
+            le=5000,
         ),
     ] = 100,
+    root_title: Annotated[
+        str | None,
+        Field(
+            description=(
+                "Title of a root page. When set, only pages under this page "
+                "(its subtree) are returned. Mutually exclusive with root_page_id."
+            ),
+            default=None,
+        ),
+    ] = None,
+    root_page_id: Annotated[
+        str | None,
+        Field(
+            description=(
+                "ID of a root page. When set, only pages under this page "
+                "(its subtree) are returned. Mutually exclusive with root_title."
+            ),
+            default=None,
+        ),
+    ] = None,
+    exclude_pattern: Annotated[
+        str | None,
+        Field(
+            description=(
+                "Regex pattern (case-insensitive) to exclude pages by title. "
+                "Matched pages AND all their descendants are removed from results. "
+                "Example: 'archive|releases' excludes any page whose title "
+                "contains 'archive' or 'releases' (case-insensitive)."
+            ),
+            default=None,
+        ),
+    ] = None,
 ) -> str:
     """Get page hierarchy for a Confluence space as a flat list.
 
@@ -532,12 +564,18 @@ async def get_space_page_tree(
     processing. Filter by depth to focus on relevant sections, or find
     pages by title. Much more efficient than rendering full ASCII trees.
 
+    Use root_title or root_page_id to get only a subtree. Use
+    exclude_pattern to remove irrelevant sections (e.g. 'archive').
+
     Use this to understand space organization before creating/moving pages.
 
     Args:
         ctx: The FastMCP context.
         space_key: Space key identifier.
-        limit: Maximum pages to fetch (start with 100 for faster results).
+        limit: Maximum pages to return (start with 100 for faster results).
+        root_title: Title of root page to get subtree for.
+        root_page_id: ID of root page to get subtree for.
+        exclude_pattern: Regex to exclude pages by title (+ descendants).
 
     Returns:
         JSON with space_key, total_pages, and pages array containing
@@ -545,7 +583,32 @@ async def get_space_page_tree(
         Root pages have parent_id: null and depth: 0.
     """
     confluence_fetcher = await get_confluence_fetcher(ctx)
-    tree_data = confluence_fetcher.get_space_page_tree(space_key=space_key, limit=limit)
+
+    # Resolve root_title to root_page_id
+    resolved_root_id = root_page_id
+    if root_title and not root_page_id:
+        root_page = confluence_fetcher.get_page_by_title(
+            space_key, root_title, convert_to_markdown=False
+        )
+        if root_page:
+            resolved_root_id = root_page.id
+        else:
+            return json.dumps(
+                {
+                    "error": (
+                        f"Root page titled '{root_title}' not found "
+                        f"in space '{space_key}'."
+                    )
+                },
+                ensure_ascii=False,
+            )
+
+    tree_data = confluence_fetcher.get_space_page_tree(
+        space_key=space_key,
+        limit=limit,
+        root_page_id=resolved_root_id,
+        exclude_pattern=exclude_pattern,
+    )
 
     result: dict[str, object] = dict(tree_data)
 

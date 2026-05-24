@@ -3435,6 +3435,241 @@ class TestPageHierarchy:
         assert result["total_pages"] == 1
         assert result["has_more"] is False
 
+    def test_exclude_pattern_removes_matching_pages(self, pages_mixin):
+        """Test exclude_pattern filters out pages whose titles match."""
+        mock_pages = [
+            {
+                "id": "1",
+                "title": "Home",
+                "ancestors": [],
+                "extensions": {"position": 0},
+            },
+            {
+                "id": "2",
+                "title": "Archive",
+                "ancestors": [],
+                "extensions": {"position": 1},
+            },
+            {
+                "id": "3",
+                "title": "Archive - Old Stuff",
+                "ancestors": [],
+                "extensions": {"position": 2},
+            },
+        ]
+        pages_mixin.confluence.get_all_pages_from_space_raw = MagicMock(
+            return_value=self._raw_response(mock_pages)
+        )
+
+        result = pages_mixin.get_space_page_tree(
+            "TEST", exclude_pattern="archive"
+        )
+
+        assert result["total_pages"] == 1
+        titles = [p["title"] for p in result["pages"]]
+        assert "Home" in titles
+        assert "Archive" not in titles
+        assert "Archive - Old Stuff" not in titles
+
+    def test_exclude_pattern_removes_descendants(self, pages_mixin):
+        """Test that descendants of excluded pages are also removed."""
+        mock_pages = [
+            {
+                "id": "1",
+                "title": "Home",
+                "ancestors": [],
+                "extensions": {"position": 0},
+            },
+            {
+                "id": "2",
+                "title": "Archive",
+                "ancestors": [],
+                "extensions": {"position": 1},
+            },
+            {
+                "id": "3",
+                "title": "Old Project",
+                "ancestors": [{"id": "2"}],
+                "extensions": {"position": 0},
+            },
+            {
+                "id": "4",
+                "title": "Old Details",
+                "ancestors": [{"id": "2"}, {"id": "3"}],
+                "extensions": {"position": 0},
+            },
+            {
+                "id": "5",
+                "title": "Active Project",
+                "ancestors": [{"id": "1"}],
+                "extensions": {"position": 0},
+            },
+        ]
+        pages_mixin.confluence.get_all_pages_from_space_raw = MagicMock(
+            return_value=self._raw_response(mock_pages)
+        )
+
+        result = pages_mixin.get_space_page_tree(
+            "TEST", exclude_pattern="^Archive$"
+        )
+
+        titles = [p["title"] for p in result["pages"]]
+        assert "Home" in titles
+        assert "Active Project" in titles
+        assert "Archive" not in titles
+        assert "Old Project" not in titles
+        assert "Old Details" not in titles
+        assert result["total_pages"] == 2
+
+    def test_root_page_id_returns_subtree(self, pages_mixin):
+        """Test root_page_id filters to only the subtree."""
+        mock_pages = [
+            {
+                "id": "1",
+                "title": "Home",
+                "ancestors": [],
+                "extensions": {"position": 0},
+            },
+            {
+                "id": "2",
+                "title": "Projects",
+                "ancestors": [],
+                "extensions": {"position": 1},
+            },
+            {
+                "id": "3",
+                "title": "Project A",
+                "ancestors": [{"id": "2"}],
+                "extensions": {"position": 0},
+            },
+            {
+                "id": "4",
+                "title": "Design Doc",
+                "ancestors": [{"id": "2"}, {"id": "3"}],
+                "extensions": {"position": 0},
+            },
+        ]
+        pages_mixin.confluence.get_all_pages_from_space_raw = MagicMock(
+            return_value=self._raw_response(mock_pages)
+        )
+
+        result = pages_mixin.get_space_page_tree(
+            "TEST", root_page_id="2"
+        )
+
+        titles = [p["title"] for p in result["pages"]]
+        assert "Projects" in titles
+        assert "Project A" in titles
+        assert "Design Doc" in titles
+        assert "Home" not in titles
+        assert result["total_pages"] == 3
+
+    def test_root_page_id_combined_with_exclude(self, pages_mixin):
+        """Test root_page_id and exclude_pattern work together."""
+        mock_pages = [
+            {
+                "id": "1",
+                "title": "Home",
+                "ancestors": [],
+                "extensions": {"position": 0},
+            },
+            {
+                "id": "2",
+                "title": "Projects",
+                "ancestors": [],
+                "extensions": {"position": 1},
+            },
+            {
+                "id": "3",
+                "title": "Active",
+                "ancestors": [{"id": "2"}],
+                "extensions": {"position": 0},
+            },
+            {
+                "id": "4",
+                "title": "Releases",
+                "ancestors": [{"id": "2"}],
+                "extensions": {"position": 1},
+            },
+            {
+                "id": "5",
+                "title": "v1.0 notes",
+                "ancestors": [{"id": "2"}, {"id": "4"}],
+                "extensions": {"position": 0},
+            },
+        ]
+        pages_mixin.confluence.get_all_pages_from_space_raw = MagicMock(
+            return_value=self._raw_response(mock_pages)
+        )
+
+        result = pages_mixin.get_space_page_tree(
+            "TEST", root_page_id="2", exclude_pattern="releases"
+        )
+
+        titles = [p["title"] for p in result["pages"]]
+        assert "Projects" in titles
+        assert "Active" in titles
+        assert "Releases" not in titles
+        assert "v1.0 notes" not in titles
+        assert "Home" not in titles
+        assert result["total_pages"] == 2
+
+    def test_exclude_pattern_over_fetches_when_filtering(self, pages_mixin):
+        """Test that internal limit is raised when filters are active."""
+        batch = [
+            {
+                "id": str(i),
+                "title": f"Page {i}" if i % 2 == 0 else "Archive item",
+                "ancestors": [],
+                "extensions": {"position": i},
+            }
+            for i in range(5)
+        ]
+        pages_mixin.confluence.get_all_pages_from_space_raw = MagicMock(
+            return_value=self._raw_response(batch)
+        )
+
+        result = pages_mixin.get_space_page_tree(
+            "TEST", limit=2, exclude_pattern="archive"
+        )
+
+        # Should keep only even-numbered pages (titles "Page 0", "Page 2", "Page 4")
+        # but limit to 2
+        assert result["total_pages"] == 2
+        assert result["has_more"] is True
+
+    def test_exclude_pattern_case_insensitive(self, pages_mixin):
+        """Test that exclude_pattern is case-insensitive."""
+        mock_pages = [
+            {
+                "id": "1",
+                "title": "Home",
+                "ancestors": [],
+                "extensions": {"position": 0},
+            },
+            {
+                "id": "2",
+                "title": "ARCHIVE",
+                "ancestors": [],
+                "extensions": {"position": 1},
+            },
+            {
+                "id": "3",
+                "title": "archive",
+                "ancestors": [],
+                "extensions": {"position": 2},
+            },
+        ]
+        pages_mixin.confluence.get_all_pages_from_space_raw = MagicMock(
+            return_value=self._raw_response(mock_pages)
+        )
+
+        result = pages_mixin.get_space_page_tree(
+            "TEST", exclude_pattern="Archive"
+        )
+
+        assert result["total_pages"] == 1
+        assert result["pages"][0]["title"] == "Home"
 
 class TestUpdatePageSection:
     """Tests for PagesMixin.update_page_section."""
