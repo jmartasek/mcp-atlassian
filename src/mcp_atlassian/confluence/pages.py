@@ -1156,6 +1156,7 @@ class PagesMixin(ConfluenceClient):
         limit: int = 500,
         root_page_id: str | None = None,
         exclude_pattern: str | None = None,
+        status: str = "current",
     ) -> dict:
         """Get hierarchical page tree for a space.
 
@@ -1174,13 +1175,17 @@ class PagesMixin(ConfluenceClient):
                 of (or equal to) this page. Use to get a subtree.
             exclude_pattern: Regex pattern (case-insensitive) to exclude pages
                 by title. Matched pages AND all their descendants are removed.
+            status: Page status to fetch. Default "current" returns only
+                active pages. Use "any" for current + trashed, "archived"
+                for archived pages only, or "trashed" for trashed only.
 
         Returns:
             Dictionary with:
             - space_key: The space key
             - total_pages: Total number of pages in the response
             - has_more: Whether more pages exist beyond the limit
-            - pages: List of dicts with id, title, parent_id, position, depth
+            - pages: List of dicts with id, title, status, parent_id,
+              position, depth
             - Note: parent_id is None for root pages
 
         Raises:
@@ -1216,6 +1221,7 @@ class PagesMixin(ConfluenceClient):
                     space=space_key,
                     start=start,
                     limit=fetch_limit,
+                    status=status,
                     expand="ancestors",
                 )
                 batch = response.get("results", [])
@@ -1303,6 +1309,7 @@ class PagesMixin(ConfluenceClient):
                     {
                         "id": page_id,
                         "title": title,
+                        "status": page.get("status", "current"),
                         "parent_id": parent_id,
                         "position": position,
                         "depth": depth,

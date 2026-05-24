@@ -656,6 +656,7 @@ async def test_get_space_page_tree(client, mock_confluence_fetcher):
     assert call_kwargs["limit"] == 100
     assert call_kwargs["root_page_id"] is None
     assert call_kwargs["exclude_pattern"] is None
+    assert call_kwargs["status"] == "current"
 
     result_data = json.loads(response.content[0].text)
     assert result_data["space_key"] == "TEST"

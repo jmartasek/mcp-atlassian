@@ -557,6 +557,17 @@ async def get_space_page_tree(
             default=None,
         ),
     ] = None,
+    status: Annotated[
+        str,
+        Field(
+            description=(
+                "Page status to fetch. 'current' (default) returns only active "
+                "pages. Use 'archived' for archived pages, 'trashed' for "
+                "trashed, or 'any' for current + trashed."
+            ),
+            default="current",
+        ),
+    ] = "current",
 ) -> str:
     """Get page hierarchy for a Confluence space as a flat list.
 
@@ -576,10 +587,11 @@ async def get_space_page_tree(
         root_title: Title of root page to get subtree for.
         root_page_id: ID of root page to get subtree for.
         exclude_pattern: Regex to exclude pages by title (+ descendants).
+        status: Page status filter (default: 'current').
 
     Returns:
         JSON with space_key, total_pages, and pages array containing
-        {id, title, parent_id, position, depth} for each page.
+        {id, title, status, parent_id, position, depth} for each page.
         Root pages have parent_id: null and depth: 0.
     """
     confluence_fetcher = await get_confluence_fetcher(ctx)
@@ -608,6 +620,7 @@ async def get_space_page_tree(
         limit=limit,
         root_page_id=resolved_root_id,
         exclude_pattern=exclude_pattern,
+        status=status,
     )
 
     result: dict[str, object] = dict(tree_data)

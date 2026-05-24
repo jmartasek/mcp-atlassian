@@ -266,6 +266,7 @@ class ConfluencePage(ApiModel, TimestampMixin):
             "id": self.id,
             "title": self.title,
             "type": self.type,
+            "status": self.status,
             "created": self.format_timestamp(self.created),
             "updated": self.format_timestamp(self.updated),
             "url": self.url,

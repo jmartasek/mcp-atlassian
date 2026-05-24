@@ -3671,6 +3671,77 @@ class TestPageHierarchy:
         assert result["total_pages"] == 1
         assert result["pages"][0]["title"] == "Home"
 
+    def test_status_defaults_to_current(self, pages_mixin):
+        """Test that status defaults to 'current' in API calls."""
+        pages_mixin.confluence.get_all_pages_from_space_raw = MagicMock(
+            return_value=self._raw_response([])
+        )
+
+        pages_mixin.get_space_page_tree("TEST")
+
+        call_kwargs = pages_mixin.confluence.get_all_pages_from_space_raw.call_args
+        assert call_kwargs.kwargs.get("status") == "current"
+
+    def test_status_passed_to_api(self, pages_mixin):
+        """Test that custom status value is passed through to API."""
+        pages_mixin.confluence.get_all_pages_from_space_raw = MagicMock(
+            return_value=self._raw_response([])
+        )
+
+        pages_mixin.get_space_page_tree("TEST", status="archived")
+
+        call_kwargs = pages_mixin.confluence.get_all_pages_from_space_raw.call_args
+        assert call_kwargs.kwargs.get("status") == "archived"
+
+    def test_status_included_in_page_output(self, pages_mixin):
+        """Test that page status is included in the output."""
+        mock_pages = [
+            {
+                "id": "1",
+                "title": "Active Page",
+                "status": "current",
+                "ancestors": [],
+                "extensions": {"position": 0},
+            },
+        ]
+        pages_mixin.confluence.get_all_pages_from_space_raw = MagicMock(
+            return_value=self._raw_response(mock_pages)
+        )
+
+        result = pages_mixin.get_space_page_tree("TEST")
+
+        assert result["pages"][0]["status"] == "current"
+
+    def test_status_any_returns_mixed(self, pages_mixin):
+        """Test that status='any' can return pages with different statuses."""
+        mock_pages = [
+            {
+                "id": "1",
+                "title": "Active Page",
+                "status": "current",
+                "ancestors": [],
+                "extensions": {"position": 0},
+            },
+            {
+                "id": "2",
+                "title": "Trashed Page",
+                "status": "trashed",
+                "ancestors": [],
+                "extensions": {"position": 1},
+            },
+        ]
+        pages_mixin.confluence.get_all_pages_from_space_raw = MagicMock(
+            return_value=self._raw_response(mock_pages)
+        )
+
+        result = pages_mixin.get_space_page_tree("TEST", status="any")
+
+        assert result["total_pages"] == 2
+        statuses = {p["status"] for p in result["pages"]}
+        assert "current" in statuses
+        assert "trashed" in statuses
+
+
 class TestUpdatePageSection:
     """Tests for PagesMixin.update_page_section."""
 
